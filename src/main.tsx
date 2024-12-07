@@ -6,7 +6,7 @@ import './index.css'
 
 // 创建 Apollo Client 实例
 const client = new ApolloClient({
-  uri: 'your-graphql-endpoint', // 替换为您的 GraphQL API 地址
+  uri: 'http://localhost:3000/admin-api', // 替换为您的 GraphQL API 地址
   cache: new InMemoryCache()
 });
 

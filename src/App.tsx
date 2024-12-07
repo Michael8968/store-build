@@ -33,8 +33,8 @@ function App() {
     try {
       await login({
         variables: {
-          username: "your_username", // 这里替换为实际的用户名
-          password: "your_password"  // 这里替换为实际的密码
+          username: "superadmin", // 这里替换为实际的用户名
+          password: "superadmin"  // 这里替换为实际的密码
         }
       });
     } catch (error) {
