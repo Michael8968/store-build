@@ -1,31 +1,28 @@
-# Build stage
-FROM node:20 AS build
+# Start your image with a node base image
+FROM node:18-alpine
 
+# The /app directory should act as the main application directory
 WORKDIR /app
 
-# Copy package files
-COPY package.json package-lock.json ./
+# Copy the app package and package-lock.json file
+COPY package*.json ./
 
-# Install dependencies
-RUN npm ci
+# Copy local directories to the current local directory of our docker image (/app)
+COPY ./src ./src
+COPY ./public ./public
+COPY ./tsconfig.json ./tsconfig.json
+COPY ./tsconfig.app.json ./tsconfig.app.json
+COPY ./tsconfig.node.json ./tsconfig.node.json
+COPY ./vite.config.ts ./vite.config.ts
+COPY ./index.html ./index.html
 
-# Copy source code
-COPY . .
+# Install node packages, install serve, build the app, and remove dependencies at the end
+RUN npm install \
+    && npm install -g serve \
+    && npm run build \
+    && rm -fr node_modules
 
-# Build the application
-RUN npm run build
+EXPOSE 3000
 
-# Production stage
-FROM nginx:latest
-
-# Copy built assets from build stage
-COPY --from=build /app/dist /usr/share/nginx/html
-
-# Copy nginx configuration if you have custom config
-# COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-# Expose port 80
-EXPOSE 3001
-
-# Start nginx
-CMD ["nginx", "-g", "daemon off;"] 
+# Start the app using serve command
+CMD [ "serve", "-s", "dist" ]
