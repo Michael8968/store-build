@@ -1,96 +1,272 @@
 import React from 'react'
-import { useMutation, gql } from '@apollo/client'
+import { gql, useQuery, useMutation } from '@apollo/client';
 import './App.css'
 
-// 定义登录 mutation
-const CURRENT_USER_FRAGMENT = gql`
-    fragment CurrentUser on CurrentUser {
+const PRODUCT_LIST_QUERY_PRODUCT_FRAGMENT = gql`
+    fragment ProductListQueryProductFragment on Product {
         id
-        identifier
-        channels {
+        createdAt
+        updatedAt
+        enabled
+        languageCode
+        name
+        slug
+        featuredAsset {
             id
-            code
-            token
-            permissions
+            createdAt
+            updatedAt
+            preview
+            focalPoint {
+                x
+                y
+            }
+        }
+        variantList {
+            totalItems
         }
     }
 `;
-const ERROR_RESULT_FRAGMENT = gql`
-    fragment ErrorResult on ErrorResult {
-        errorCode
-        message
+
+const PRODUCT_LIST_QUERY = gql`
+    query ProductListQuery($options: ProductListOptions) {
+        products(options: $options) {
+            items {
+                ...ProductListQueryProductFragment
+            }
+            totalItems
+        }
     }
+    ${PRODUCT_LIST_QUERY_PRODUCT_FRAGMENT}
 `;
+
+type Scalars = {
+    ID: { input: string; output: string; }
+    String: { input: string; output: string; }
+    Boolean: { input: boolean; output: boolean; }
+    Int: { input: number; output: number; }
+    Float: { input: number; output: number; }
+};
+interface Product {
+    __typename?: 'Product'
+    description: Scalars['String']['output'];
+    enabled: Scalars['Boolean']['output'];
+    id: Scalars['ID']['output'];
+    name: Scalars['String']['output'];
+};
+
+// Update login fragments
+const CURRENT_USER_FRAGMENT = gql`
+  fragment CurrentUser on CurrentUser {
+    id
+    identifier
+    channels {
+      id
+      code
+      token
+      permissions
+    }
+  }
+`;
+
+const ERROR_RESULT_FRAGMENT = gql`
+  fragment ErrorResult on ErrorResult {
+    errorCode
+    message
+  }
+`;
+
+// Update login mutation
 const LOGIN_MUTATION = gql`
-  mutation Login($username: String!, $password: String!, $rememberMe: Boolean) {
+  mutation AttemptLogin($username: String!, $password: String!, $rememberMe: Boolean!) {
     login(username: $username, password: $password, rememberMe: $rememberMe) {
-        ...CurrentUser
-        ...ErrorResult
+      ...CurrentUser
+      ...ErrorResult
     }
   }
   ${CURRENT_USER_FRAGMENT}
   ${ERROR_RESULT_FRAGMENT}
-`
+`;
 
-interface UserInfo {
-    id: string;
-    identifier: string;
-    channels: {
-        id: string;
-        code: string;
-        token: string;
-        permissions: string[];
-    }[];
-    }
+function App () {
+    React.useEffect(() => {
+        // send message to opener
+        window.opener?.postMessage({
+            type: 'ready',
+        }, '*');
 
-function App() {
-  const [userInfo, setUserInfo] = React.useState<UserInfo>();
-  // 使用 Apollo useMutation hook
-  const [login, { loading }] = useMutation(LOGIN_MUTATION, {
-    onCompleted: (data) => {
-      console.log('登录成功:', data);
-      // 可以在这里处理登录成功后的逻辑
-      // 例如：保存 token 到 localStorage
-      localStorage.setItem('token', data.login.token);
-      setUserInfo(data.login);
-    },
-    onError: (error) => {
-      console.error('登录失败:', error.message);
-    }
-  });
-
-  const handleLogin = async () => {
-    try {
-      await login({
-        variables: {
-          username: "superadmin", // 这里替换为实际的用户名
-          password: "superadmin", // 这里替换为实际的密码
-          rememberMe: true
+        // listen message from opener
+        window.addEventListener('message', onMessage);
+        return () => {
+            window.removeEventListener('message', onMessage);
         }
-      });
-    } catch (error) {
-      console.error('登录请求出错:', error);
-    }
-  }
+    }, []);
 
-  return (
-    <>
-      <div>
-        <button 
-          onClick={handleLogin}
-          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-          disabled={loading}
-        >
-          {loading ? '登录中...' : '登录'}
-        </button>
-        {userInfo && <div>
-            <p>登录结果</p>
-            <p> {`id: ${userInfo?.id}`}</p>
-            <p> {`identifier: ${userInfo?.identifier}`}</p>
-        </div>}
-      </div>
-    </>
-  )
+    const [productList, setProductList] = React.useState<Product[]>([]);
+    const [loading, setLoading] = React.useState(false);
+    const [error, setError] = React.useState<string | null>(null);
+
+    const { data, loading: queryLoading, error: queryError, refetch } = useQuery(PRODUCT_LIST_QUERY, {
+        variables: {
+            options: {
+                skip: 0,
+                take: 10,
+                filter: {},
+                filterOperator: "AND",
+                sort: {
+                    createdAt: "DESC"
+                }
+            }
+        },
+        // 默认不执行查询
+        skip: true
+    });
+
+    // Update login mutation
+    const [loginMutation] = useMutation(LOGIN_MUTATION, {
+        onCompleted: (data) => {
+            if (data.login?.channels?.[0]?.token) {
+                const token = data.login.channels[0].token;
+                localStorage.setItem('vnd__authToken', token);
+                // Notify opener about successful login
+                window.opener?.postMessage({
+                    type: 'loginSuccess',
+                    token: token,
+                    user: {
+                        id: data.login.id,
+                        identifier: data.login.identifier,
+                        permissions: data.login.channels[0].permissions
+                    }
+                }, '*');
+                // Refresh product query
+                refetch();
+            }
+        },
+        onError: (error) => {
+            setError(error.message);
+        }
+    });
+
+    const login = async (username: string, password: string) => {
+        try {
+            setLoading(true);
+            setError(null);
+            await loginMutation({
+                variables: {
+                    username,
+                    password,
+                    rememberMe: false // 添加 rememberMe 参数
+                }
+            });
+        } catch (err) {
+            console.error('Login error:', err);
+            if (err instanceof Error) {
+                setError(err.message);
+            } else {
+                setError('Login failed');
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const onMessage = (event: MessageEvent) => {
+        // ignore message from self
+        if (event.source === window) {
+            return;
+        }
+        console.log('message from opener', event);
+        
+        if (event.data.type === 'authToken') {
+            localStorage.setItem('vnd__authToken', event.data.token.replace(/^"|"$/g, ''));
+            // Refresh query when receiving new token
+            refetch();
+        }
+        
+        if (event.data.type === 'login') {
+            // Handle login request from opener
+            login(event.data.username, event.data.password);
+        }
+    }
+
+    // 添加获取产品列表的处理函数
+    const handleGetProducts = async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const token = localStorage.getItem('vnd__authToken');
+            
+            if (!token) {
+                setError('No authentication token found. Please login first.');
+                return;
+            }
+
+            const result = await refetch();
+            if (result.data?.products?.items) {
+                setProductList(result.data.products.items);
+            }
+        } catch (err) {
+            console.error('Error fetching products:', err);
+            if (err instanceof Error) {
+                setError(err.message);
+            } else {
+                setError('Failed to fetch products');
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Update product list when data changes
+    React.useEffect(() => {
+        if (data?.products?.items) {
+            setProductList(data.products.items);
+        }
+        setLoading(queryLoading);
+        if (queryError) {
+            setError(queryError.message);
+        }
+    }, [data, queryLoading, queryError]);
+
+    return (
+        <div>
+            <h2>Product List</h2>
+            
+            {/* Add Get Products button */}
+            <button 
+                onClick={handleGetProducts}
+                disabled={loading || !localStorage.getItem('vnd__authToken')}
+            >
+                {loading ? 'Loading...' : 'Get Products'}
+            </button>
+
+            {error && (
+                <p style={{ color: 'red' }}>Error: {error}</p>
+            )}
+
+            {productList.length > 0 && (
+                <ul>
+                    {productList.map(product => (
+                        <li key={product.id}>
+                            <p>Name: {product.name}</p>
+                            <p>ID: {product.id}</p>
+                            <p>Enabled: {product.enabled ? 'Yes' : 'No'}</p>
+                            {product.featuredAsset && (
+                                <img 
+                                    src={product.featuredAsset.preview} 
+                                    alt={product.name}
+                                    style={{ maxWidth: '100px' }}
+                                />
+                            )}
+                        </li>
+                    ))}
+                </ul>
+            )}
+
+            {productList.length === 0 && !loading && !error && (
+                <p>No products to display. Click the button to load products.</p>
+            )}
+        </div>
+    )
 }
 
 export default App
